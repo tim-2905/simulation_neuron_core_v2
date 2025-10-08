@@ -1,0 +1,277 @@
+`timescale 1ns/1ps
+
+module tb_top;
+
+  // Clock/Reset
+  reg Clk = 0; always #5 Clk = ~Clk;   // 100 MHz
+  reg reset = 1'b0;
+
+  // GPIO: current_timestep 
+  reg  [31:0] current_timestep_tri_i = 32'd0;
+
+  // AXIS in: hot_neurons 
+  reg  [31:0] hot_neurons_tdata  = 32'd0;
+  wire        hot_neurons_tready;
+  reg         hot_neurons_tvalid = 1'b0;
+
+  // AXIS out: spiking_neurons 
+  wire [31:0] spiking_neurons_tdata;
+  wire        spiking_neurons_tlast;
+  reg         spiking_neurons_tready = 1'b1;
+  wire        spiking_neurons_tvalid;
+
+  // AXI4 Master (external) : weight_sum (S01_AXI an SmartConnect) 
+  reg  [31:0] weight_sum_araddr  = 32'd0; // Startadresse zum Lesen
+  reg  [1:0]  weight_sum_arburst = 2'b01; // Burst-Typ
+  reg  [3:0]  weight_sum_arcache = 4'b0011; // Cacheattribute
+  reg  [7:0]  weight_sum_arlen   = 8'd0; // Anzahl der Beats im Leseburst
+  reg         weight_sum_arlock  = 1'b0; // Lock-Informationen
+  reg  [2:0]  weight_sum_arprot  = 3'b000; // Schutzinformationen
+  reg  [3:0]  weight_sum_arqos   = 4'd0; // QoS
+  wire        weight_sum_arready; // Handshake-Signale für Adressvalidierung
+  reg  [2:0]  weight_sum_arsize  = 3'b010;  // 4 bytes
+  reg         weight_sum_arvalid = 1'b0; // Handshake-Signale für Adressvalidierung
+
+  // AW/W/B
+  reg  [31:0] weight_sum_awaddr  = 32'd0; // Startadresse des Schreibzugriffs
+  reg  [1:0]  weight_sum_awburst = 2'b01; // Burst-Typ (z. B. INCR für inkrementelle Adresse)
+  reg  [3:0]  weight_sum_awcache = 4'b0011; // Cache-Attribute, wie speicherbezogen oder reserviert
+  reg  [7:0]  weight_sum_awlen   = 8'd0; // Anzahl der Beats im Burst (0 = 1 Beat)
+  reg         weight_sum_awlock  = 1'b0; //  Lock-Steuerung für atomare Operationen
+  reg  [2:0]  weight_sum_awprot  = 3'b000; // Schutzinformationen (Privileg, Sicherheit)
+  reg  [3:0]  weight_sum_awqos   = 4'd0; // Qualitätsmerkmale der Transaktion
+  wire        weight_sum_awready; // Handshake-Signale für Adressvalidierung
+  reg  [2:0]  weight_sum_awsize  = 3'b010;  // 4 bytes
+  reg         weight_sum_awvalid = 1'b0; // Handshake-Signale für Adressvalidierung
+
+  reg         weight_sum_bready  = 1'b0; // Handshake-Signale um die Antwort zu übermitteln
+  wire [1:0]  weight_sum_bresp; // Status der Schreibtransaktion (OK, Fehler)
+  wire        weight_sum_bvalid; // Handshake-Signale um die Antwort zu übermitteln
+
+  wire [31:0] weight_sum_rdata; // Gelesene Daten
+  wire        weight_sum_rlast; // Letzter Beat eines Bursts
+  reg         weight_sum_rready  = 1'b0; // Handshake-Signale für die Lesedatenübertragung
+  wire [1:0]  weight_sum_rresp; // Status der Leseantwort
+  wire        weight_sum_rvalid; // Handshake-Signale für die Lesedatenübertragung
+
+  reg  [31:0] weight_sum_wdata   = 32'd0; // Die eigentlichen Daten, die geschrieben werden
+  reg         weight_sum_wlast   = 1'b0; // Signalisiert den letzten Beat eines Bursts
+  wire        weight_sum_wready; // Handshake-Signale für Datenübertragung
+  reg  [3:0]  weight_sum_wstrb   = 4'h0; // Byte-Strobes, welche Bytes gültig sind
+  reg         weight_sum_wvalid  = 1'b0; // Handshake-Signale für Datenübertragung
+  
+  // while loop flag
+  wire [31:0]GPIO_0_wl_flag_tri_o;
+  
+  // busy flag
+  wire [31:0] GPIO_0_busy_flag_tri_o;
+  
+  // timestep done flag
+  wire [31:0] GPIO_0_timestep_done_tri_o;
+  
+  // BRAM flag
+  wire [31:0]GPIO_0_BRAM_flag_tri_o;
+
+  // DUT 
+design_5_wrapper dut (
+    .Clk(Clk),
+    .reset(reset),
+
+    .current_timestep_tri_i(current_timestep_tri_i),
+
+    .hot_neurons_tdata(hot_neurons_tdata),
+    .hot_neurons_tready(hot_neurons_tready),
+    .hot_neurons_tvalid(hot_neurons_tvalid),
+
+    .spiking_neurons_tdata(spiking_neurons_tdata),
+    .spiking_neurons_tlast(spiking_neurons_tlast),
+    .spiking_neurons_tready(spiking_neurons_tready),
+    .spiking_neurons_tvalid(spiking_neurons_tvalid),
+
+    // AXI Master: external
+    .weight_sum_araddr (weight_sum_araddr ),
+    .weight_sum_arburst(weight_sum_arburst),
+    .weight_sum_arcache(weight_sum_arcache),
+    .weight_sum_arlen  (weight_sum_arlen  ),
+    .weight_sum_arlock (weight_sum_arlock ),
+    .weight_sum_arprot (weight_sum_arprot ),
+    .weight_sum_arqos  (weight_sum_arqos  ),
+    .weight_sum_arready(weight_sum_arready),
+    .weight_sum_arsize (weight_sum_arsize ),
+    .weight_sum_arvalid(weight_sum_arvalid),
+
+    .weight_sum_awaddr (weight_sum_awaddr ),
+    .weight_sum_awburst(weight_sum_awburst),
+    .weight_sum_awcache(weight_sum_awcache),
+    .weight_sum_awlen  (weight_sum_awlen  ),
+    .weight_sum_awlock (weight_sum_awlock ),
+    .weight_sum_awprot (weight_sum_awprot ),
+    .weight_sum_awqos  (weight_sum_awqos  ),
+    .weight_sum_awready(weight_sum_awready),
+    .weight_sum_awsize (weight_sum_awsize ),
+    .weight_sum_awvalid(weight_sum_awvalid),
+
+    .weight_sum_bready (weight_sum_bready ),
+    .weight_sum_bresp  (weight_sum_bresp  ),
+    .weight_sum_bvalid (weight_sum_bvalid ),
+
+    .weight_sum_rdata  (weight_sum_rdata  ),
+    .weight_sum_rlast  (weight_sum_rlast  ),
+    .weight_sum_rready (weight_sum_rready ),
+    .weight_sum_rresp  (weight_sum_rresp  ),
+    .weight_sum_rvalid (weight_sum_rvalid ),
+
+    .weight_sum_wdata  (weight_sum_wdata  ),
+    .weight_sum_wlast  (weight_sum_wlast  ),
+    .weight_sum_wready (weight_sum_wready ),
+    .weight_sum_wstrb  (weight_sum_wstrb  ),
+    .weight_sum_wvalid (weight_sum_wvalid ),
+    
+    .GPIO_0_wl_flag_tri_o(GPIO_0_wl_flag_tri_o),
+    .GPIO_0_busy_flag_tri_o(GPIO_0_busy_flag_tri_o),
+    .GPIO_0_timestep_done_tri_o(GPIO_0_timestep_done_tri_o),
+    .GPIO_0_BRAM_flag_tri_o(GPIO_0_BRAM_flag_tri_o)
+);
+
+  
+  localparam BRAM_BASE = 32'hC000_0000;  
+
+  // task write weight sum
+task axi_write32(input [31:0] addr, input [31:0] data);
+begin
+  // Address phase
+  @(posedge Clk);
+  weight_sum_awaddr  <= addr;
+  weight_sum_awlen   <= 8'd0;      // 1 beat
+  weight_sum_awsize  <= 3'b010;    // 4 bytes
+  weight_sum_awburst <= 2'b01;     // INCR
+  weight_sum_awvalid <= 1'b1;
+
+  // Data phase
+  weight_sum_wdata   <= data;
+  weight_sum_wstrb   <= 4'hF;      // 32-bit bus: alle Bytes
+  weight_sum_wlast   <= 1'b1;
+  weight_sum_wvalid  <= 1'b1;
+
+  // AW handshake (taktbasiert)
+  while (!(weight_sum_awvalid && weight_sum_awready)) @(posedge Clk);
+  weight_sum_awvalid <= 1'b0;
+
+  // W handshake (taktbasiert)
+  while (!(weight_sum_wvalid && weight_sum_wready)) @(posedge Clk);
+  weight_sum_wvalid  <= 1'b0;
+  weight_sum_wlast   <= 1'b0;
+
+  // B response (taktbasiert)
+  weight_sum_bready  <= 1'b1;
+  while (!weight_sum_bvalid) @(posedge Clk);
+  @(posedge Clk);
+  weight_sum_bready  <= 1'b0;
+end
+endtask
+
+
+
+  // task send current timestep
+  task send_current_timestep(input [31:0] ts);
+  begin
+    @(posedge Clk);
+    current_timestep_tri_i <= ts;
+  end
+  endtask
+
+  // task send hot neurons  
+  task send_hot_neurons(input [31:0] id);
+  begin
+    @(posedge Clk);
+    hot_neurons_tdata  <= id;
+    hot_neurons_tvalid <= 1'b1;
+    wait (hot_neurons_tready === 1'b1);
+    @(posedge Clk);
+    hot_neurons_tvalid <= 1'b0;
+  end
+  endtask
+
+  // Monitor
+  always @(posedge Clk) begin
+    if (spiking_neurons_tvalid && spiking_neurons_tready)
+      $display("%t OUT %h", $time, spiking_neurons_tdata);
+  end
+  
+
+// wait for sign of life flag
+task wait_for_sof;
+begin : wait_or_timeout
+  if (GPIO_0_wl_flag_tri_o[0] === 1'b1) begin
+   
+  end else begin
+    fork
+      // Timeout-Zweige, paralleler Aufruf
+      begin : timeout_blk
+        repeat (20000000) @(posedge Clk);
+        disable sof_edge_blk;             
+        $fatal(1, "Timeout: kein Sign-of-Life empfangen"); 
+      end
+    
+      begin : sof_edge_blk
+        @(posedge GPIO_0_wl_flag_tri_o[0]);
+        disable timeout_blk;                
+      end
+    join
+  end
+end
+endtask
+
+
+  // Stimulus 
+initial begin
+  reset <= 1'b1; repeat(10) @(posedge Clk); reset <= 1'b0;
+
+
+  wait_for_sof();
+  
+  // DUT füttern
+  
+  // Write BRAM first to ensure reading actual BRAM values !
+  axi_write32(BRAM_BASE + 32'd4*1, 32'h4100_0000);  // neuron 1: 8.0f
+  axi_write32(BRAM_BASE + 32'd4*2, 32'h4040_0000);  // neuron 2: 3.0f
+ 
+
+
+  // First iterate
+
+  send_current_timestep(32'd1);
+  send_hot_neurons(32'd1);
+  
+  
+  while (!spiking_neurons_tvalid) begin
+  
+    @(posedge Clk);
+  
+  end
+
+  // Second iterate
+  
+  send_current_timestep(32'd2);
+  send_hot_neurons(32'd2);
+
+  
+  // set defined end of simulation: wait until last LIF_update_one function is executed
+  
+ while (GPIO_0_busy_flag_tri_o[0]<= 1) begin
+ 
+    @(posedge Clk);
+ 
+ end  
+ 
+ while (GPIO_0_busy_flag_tri_o[0]!= 0) begin
+ 
+    @(posedge Clk);
+ 
+ end  
+
+$finish;
+
+end
+
+endmodule
